@@ -1,8 +1,5 @@
 import './style.css'
 
-// ─── Orientation Lock ───
-try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch {}
-
 // ─── Canvas Setup ───
 const canvas = document.createElement('canvas')
 document.getElementById('app')!.appendChild(canvas)
@@ -17,6 +14,56 @@ function resize() {
 }
 resize()
 addEventListener('resize', resize)
+
+// ─── Audio ───
+const audioCtx = new AudioContext()
+
+function sfxShoot() {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+  o.connect(g); g.connect(audioCtx.destination)
+  o.type = 'square'
+  o.frequency.setValueAtTime(880, audioCtx.currentTime)
+  o.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.1)
+  g.gain.setValueAtTime(0.12, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1)
+  o.start(); o.stop(audioCtx.currentTime + 0.1)
+}
+
+function sfxBoom(big = false) {
+  const len = audioCtx.sampleRate * (big ? 0.35 : 0.15)
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len)
+  const s = audioCtx.createBufferSource(); s.buffer = buf
+  const g = audioCtx.createGain(); s.connect(g); g.connect(audioCtx.destination)
+  g.gain.setValueAtTime(big ? 0.2 : 0.1, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (big ? 0.35 : 0.15))
+  s.start()
+}
+
+function sfxThrust() {
+  const len = audioCtx.sampleRate * 0.04
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * 0.3
+  const s = audioCtx.createBufferSource(); s.buffer = buf
+  const g = audioCtx.createGain(); s.connect(g); g.connect(audioCtx.destination)
+  g.gain.setValueAtTime(0.05, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04)
+  s.start()
+}
+
+function sfxHyperspace() {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+  o.connect(g); g.connect(audioCtx.destination)
+  o.type = 'sine'
+  o.frequency.setValueAtTime(200, audioCtx.currentTime)
+  o.frequency.exponentialRampToValueAtTime(2000, audioCtx.currentTime + 0.15)
+  o.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.3)
+  g.gain.setValueAtTime(0.15, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3)
+  o.start(); o.stop(audioCtx.currentTime + 0.3)
+}
 
 // ─── Types ───
 interface Vec2 { x: number; y: number }
@@ -38,8 +85,9 @@ let asteroids: Asteroid[] = []
 let particles: Particle[] = []
 let respawnTimer = 0
 let shipVisible = true
+let hyperCooldown = 0
+let thrustTick = 0
 
-// Stars background (static)
 const stars = Array.from({ length: 200 }, () => ({
   x: Math.random(), y: Math.random(), r: Math.random() * 1.5 + 0.3, a: Math.random() * 0.6 + 0.2
 }))
@@ -50,98 +98,120 @@ addEventListener('keydown', e => {
   keys[e.code] = true
   if (state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) startGame()
   if (state === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { state = 'menu' }
+  if (state === 'playing' && (e.code === 'KeyH' || e.code === 'ShiftRight')) doHyperspace()
 })
 addEventListener('keyup', e => { keys[e.code] = false })
 
 // ─── Touch Controls ───
-let touchActive = false
-let touchJoystickId: number | null = null
-let touchJoystickCenter: Vec2 = { x: 0, y: 0 }
-let touchJoystickAngle = 0
-let touchJoystickDist = 0
-const JOYSTICK_RADIUS = 55
-const JOYSTICK_DEAD = 12
-let touchFireActive = false
-let touchFireTimer: number | null = null
-
-// Detect touch device
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
 
-function getJoystickArea() {
-  // Left half of bottom portion
-  return { x: 0, y: canvas.height * 0.5, w: canvas.width * 0.5, h: canvas.height * 0.5 }
+// D-pad state
+const dpad = { left: false, right: false, up: false }
+let dpadTouchId: number | null = null
+// Button states
+let fireActive = false
+let fireTouchId: number | null = null
+let fireAutoTimer: ReturnType<typeof setInterval> | null = null
+let hyperActive = false
+
+// Layout constants
+const DPAD_R = 55
+const DPAD_DEAD = 14
+const BTN_R = 38
+const HYPER_R = 30
+
+function dpadPos() { return { x: 90, y: canvas.height - 120 } }
+function firePos() { return { x: canvas.width - 85, y: canvas.height - 140 } }
+function hyperPos() { return { x: canvas.width - 170, y: canvas.height - 75 } }
+
+function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
+  return Math.hypot(tx - cx, ty - cy) < r + 20
 }
 
-function getFireArea() {
-  // Right half of bottom portion
-  return { x: canvas.width * 0.5, y: canvas.height * 0.5, w: canvas.width * 0.5, h: canvas.height * 0.5 }
+function updateDpad(tx: number, ty: number) {
+  const c = dpadPos()
+  const dx = tx - c.x, dy = ty - c.y
+  const d = Math.hypot(dx, dy)
+  dpad.left = false; dpad.right = false; dpad.up = false
+  if (d > DPAD_DEAD) {
+    const a = Math.atan2(dy, dx)
+    if (a < -0.3 && a > -2.8) dpad.up = true     // upper half
+    if (a > 2.2 || a < -2.2) dpad.left = true     // left side
+    if (a > -0.9 && a < 0.9) dpad.right = true    // right side
+  }
 }
 
-function isInArea(tx: number, ty: number, area: { x: number; y: number; w: number; h: number }) {
-  return tx >= area.x && tx <= area.x + area.w && ty >= area.y && ty <= area.y + area.h
-}
-
-canvas.addEventListener('touchstart', (e) => {
+canvas.addEventListener('touchstart', e => {
   e.preventDefault()
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+
   if (state === 'menu') { startGame(); return }
   if (state === 'gameover') { state = 'menu'; return }
 
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    const jArea = getJoystickArea()
-    const fArea = getFireArea()
+    const dp = dpadPos(), fp = firePos(), hp = hyperPos()
 
-    if (touchJoystickId === null && isInArea(t.clientX, t.clientY, jArea)) {
-      touchJoystickId = t.identifier
-      touchJoystickCenter = { x: t.clientX, y: t.clientY }
-      touchActive = true
-    } else if (isInArea(t.clientX, t.clientY, fArea)) {
-      touchFireActive = true
+    if (dpadTouchId === null && hitTest(t.clientX, t.clientY, dp.x, dp.y, DPAD_R)) {
+      dpadTouchId = t.identifier
+      updateDpad(t.clientX, t.clientY)
+    } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, HYPER_R)) {
+      hyperActive = true
+      doHyperspace()
+    } else if (hitTest(t.clientX, t.clientY, fp.x, fp.y, BTN_R)) {
+      fireTouchId = t.identifier
+      fireActive = true
       shootBullet()
-      if (!touchFireTimer) {
-        touchFireTimer = window.setInterval(() => { if (touchFireActive) shootBullet() }, 180)
+      if (!fireAutoTimer) {
+        fireAutoTimer = setInterval(() => { if (fireActive) shootBullet() }, 180)
       }
     }
   }
 }, { passive: false })
 
-canvas.addEventListener('touchmove', (e) => {
+canvas.addEventListener('touchmove', e => {
   e.preventDefault()
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    if (t.identifier === touchJoystickId) {
-      const dx = t.clientX - touchJoystickCenter.x
-      const dy = t.clientY - touchJoystickCenter.y
-      touchJoystickDist = Math.min(Math.hypot(dx, dy), JOYSTICK_RADIUS)
-      touchJoystickAngle = Math.atan2(dy, dx)
-    }
+    if (t.identifier === dpadTouchId) updateDpad(t.clientX, t.clientY)
   }
 }, { passive: false })
 
-canvas.addEventListener('touchend', (e) => {
+canvas.addEventListener('touchend', e => {
   e.preventDefault()
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    if (t.identifier === touchJoystickId) {
-      touchJoystickId = null
-      touchJoystickDist = 0
-      touchActive = false
+    if (t.identifier === dpadTouchId) {
+      dpadTouchId = null
+      dpad.left = false; dpad.right = false; dpad.up = false
+    }
+    if (t.identifier === fireTouchId) {
+      fireTouchId = null
+      fireActive = false
+      if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null }
     }
   }
-  // Check if any fire touches remain
-  let fireStillDown = false
-  const fArea = getFireArea()
-  for (let i = 0; i < e.touches.length; i++) {
-    if (isInArea(e.touches[i].clientX, e.touches[i].clientY, fArea)) fireStillDown = true
-  }
-  if (!fireStillDown) {
-    touchFireActive = false
-    if (touchFireTimer) { clearInterval(touchFireTimer); touchFireTimer = null }
-  }
+  hyperActive = false
 }, { passive: false })
 
+canvas.addEventListener('touchcancel', e => {
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === dpadTouchId) {
+      dpadTouchId = null; dpad.left = false; dpad.right = false; dpad.up = false
+    }
+    if (e.changedTouches[i].identifier === fireTouchId) {
+      fireTouchId = null; fireActive = false
+      if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null }
+    }
+  }
+  hyperActive = false
+})
+
+// ─── Actions ───
 function shootBullet() {
   if (state !== 'playing' || !shipVisible || bullets.length >= 8) return
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+  sfxShoot()
   const bSpeed = 8
   bullets.push({
     pos: { x: ship.pos.x + Math.cos(ship.angle) * 18, y: ship.pos.y + Math.sin(ship.angle) * 18 },
@@ -150,15 +220,24 @@ function shootBullet() {
   })
 }
 
+function doHyperspace() {
+  if (state !== 'playing' || !shipVisible || hyperCooldown > 0) return
+  sfxHyperspace()
+  spawnParticles(ship.pos.x, ship.pos.y, 12, 2)
+  ship.pos.x = Math.random() * canvas.width
+  ship.pos.y = Math.random() * canvas.height
+  ship.vel.x = 0; ship.vel.y = 0
+  spawnParticles(ship.pos.x, ship.pos.y, 12, 2)
+  hyperCooldown = 90 // 1.5s cooldown
+}
+
 // ─── Menu animation asteroids ───
 let menuAsteroids: Asteroid[] = []
 function initMenuAsteroids() {
   menuAsteroids = []
   for (let i = 0; i < 8; i++) {
     menuAsteroids.push(makeAsteroid(
-      Math.random() * canvas.width,
-      Math.random() * canvas.height,
-      30 + Math.random() * 40
+      Math.random() * canvas.width, Math.random() * canvas.height, 30 + Math.random() * 40
     ))
   }
 }
@@ -166,15 +245,11 @@ initMenuAsteroids()
 
 // ─── Game Init ───
 function startGame() {
+  if (audioCtx.state === 'suspended') audioCtx.resume()
   state = 'playing'
-  score = 0
-  lives = 3
-  level = 1
-  bullets = []
-  asteroids = []
-  particles = []
-  respawnTimer = 0
-  shipVisible = true
+  score = 0; lives = 3; level = 1
+  bullets = []; asteroids = []; particles = []
+  respawnTimer = 0; shipVisible = true; hyperCooldown = 0
   resetShip()
   spawnAsteroids(4)
 }
@@ -182,36 +257,25 @@ function startGame() {
 function resetShip() {
   ship = {
     pos: { x: canvas.width / 2, y: canvas.height / 2 },
-    vel: { x: 0, y: 0 },
-    angle: -Math.PI / 2,
-    thrust: false,
-    radius: 15
+    vel: { x: 0, y: 0 }, angle: -Math.PI / 2, thrust: false, radius: 15
   }
 }
 
 function makeAsteroid(x: number, y: number, radius: number): Asteroid {
   const numVerts = 8 + Math.floor(Math.random() * 5)
   const verts: number[] = []
-  for (let i = 0; i < numVerts; i++) {
-    verts.push(0.7 + Math.random() * 0.6)
-  }
+  for (let i = 0; i < numVerts; i++) verts.push(0.7 + Math.random() * 0.6)
   return {
-    pos: { x, y },
-    vel: { x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2 },
-    radius,
-    verts,
-    spin: (Math.random() - 0.5) * 0.02,
-    rot: Math.random() * Math.PI * 2
+    pos: { x, y }, vel: { x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2 },
+    radius, verts, spin: (Math.random() - 0.5) * 0.02, rot: Math.random() * Math.PI * 2
   }
 }
 
 function spawnAsteroids(count: number) {
   for (let i = 0; i < count; i++) {
     let x: number, y: number
-    do {
-      x = Math.random() * canvas.width
-      y = Math.random() * canvas.height
-    } while (dist(x, y, ship.pos.x, ship.pos.y) < 150)
+    do { x = Math.random() * canvas.width; y = Math.random() * canvas.height }
+    while (dist(x, y, ship.pos.x, ship.pos.y) < 150)
     asteroids.push(makeAsteroid(x, y, 40 + Math.random() * 20))
   }
 }
@@ -231,26 +295,18 @@ function spawnParticles(x: number, y: number, count: number, speed = 2) {
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2
     const s = Math.random() * speed
-    particles.push({
-      pos: { x, y },
-      vel: { x: Math.cos(a) * s, y: Math.sin(a) * s },
-      life: 30 + Math.random() * 30,
-      maxLife: 60
-    })
+    particles.push({ pos: { x, y }, vel: { x: Math.cos(a) * s, y: Math.sin(a) * s }, life: 30 + Math.random() * 30, maxLife: 60 })
   }
 }
 
 // ─── Update ───
 function update() {
   if (state === 'menu') {
-    for (const a of menuAsteroids) {
-      a.pos.x += a.vel.x; a.pos.y += a.vel.y; a.rot += a.spin; wrap(a.pos)
-    }
+    for (const a of menuAsteroids) { a.pos.x += a.vel.x; a.pos.y += a.vel.y; a.rot += a.spin; wrap(a.pos) }
     return
   }
   if (state === 'gameover') return
 
-  // Respawn
   if (respawnTimer > 0) {
     respawnTimer--
     if (respawnTimer === 0) { resetShip(); shipVisible = true }
@@ -259,43 +315,37 @@ function update() {
     return
   }
 
-  // Ship controls — keyboard
-  if (keys['ArrowLeft'] || keys['KeyA']) ship.angle -= 0.05
-  if (keys['ArrowRight'] || keys['KeyD']) ship.angle += 0.05
-  ship.thrust = !!(keys['ArrowUp'] || keys['KeyW'])
-
-  // Ship controls — touch joystick
-  if (touchActive && touchJoystickDist > JOYSTICK_DEAD) {
-    ship.angle = touchJoystickAngle
-    ship.thrust = touchJoystickDist > JOYSTICK_DEAD * 2
-  }
+  // Ship controls (keyboard + touch D-pad)
+  if (keys['ArrowLeft'] || keys['KeyA'] || dpad.left) ship.angle -= 0.05
+  if (keys['ArrowRight'] || keys['KeyD'] || dpad.right) ship.angle += 0.05
+  ship.thrust = !!(keys['ArrowUp'] || keys['KeyW'] || dpad.up)
 
   if (ship.thrust) {
+    thrustTick++
+    if (thrustTick % 4 === 0) sfxThrust()
     ship.vel.x += Math.cos(ship.angle) * 0.1
     ship.vel.y += Math.sin(ship.angle) * 0.1
-  }
+  } else { thrustTick = 0 }
+
   ship.vel.x *= 0.99; ship.vel.y *= 0.99
   const spd = Math.hypot(ship.vel.x, ship.vel.y)
   if (spd > 6) { ship.vel.x *= 6 / spd; ship.vel.y *= 6 / spd }
   ship.pos.x += ship.vel.x; ship.pos.y += ship.vel.y
   wrap(ship.pos)
 
-  // Shoot — keyboard
-  if (keys['Space'] && bullets.length < 8) {
-    keys['Space'] = false
-    shootBullet()
-  }
+  if (hyperCooldown > 0) hyperCooldown--
+
+  // Shoot (keyboard)
+  if (keys['Space']) { keys['Space'] = false; shootBullet() }
 
   // Bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i]
     b.pos.x += b.vel.x; b.pos.y += b.vel.y; b.life--
-    if (b.life <= 0 || b.pos.x < -10 || b.pos.x > canvas.width + 10 || b.pos.y < -10 || b.pos.y > canvas.height + 10) {
+    if (b.life <= 0 || b.pos.x < -10 || b.pos.x > canvas.width + 10 || b.pos.y < -10 || b.pos.y > canvas.height + 10)
       bullets.splice(i, 1)
-    }
   }
 
-  // Asteroids
   for (const a of asteroids) { a.pos.x += a.vel.x; a.pos.y += a.vel.y; a.rot += a.spin; wrap(a.pos) }
 
   // Bullet-Asteroid collision
@@ -306,6 +356,7 @@ function update() {
       if (dist(b.pos.x, b.pos.y, a.pos.x, a.pos.y) < a.radius) {
         bullets.splice(bi, 1)
         spawnParticles(a.pos.x, a.pos.y, 8)
+        sfxBoom(a.radius > 20)
         if (a.radius > 20) {
           for (let k = 0; k < 2; k++) {
             const child = makeAsteroid(a.pos.x, a.pos.y, a.radius * 0.55)
@@ -325,6 +376,7 @@ function update() {
     for (const a of asteroids) {
       if (dist(ship.pos.x, ship.pos.y, a.pos.x, a.pos.y) < a.radius + ship.radius - 5) {
         spawnParticles(ship.pos.x, ship.pos.y, 20, 3)
+        sfxBoom(true)
         shipVisible = false
         lives--
         if (lives <= 0) {
@@ -336,7 +388,6 @@ function update() {
     }
   }
 
-  // Next level
   if (asteroids.length === 0) { level++; spawnAsteroids(3 + level) }
   updateParticles()
 }
@@ -416,38 +467,68 @@ function drawHUD() {
 function drawTouchControls() {
   if (!isTouchDevice || state !== 'playing') return
 
-  // Joystick base
-  const jx = 80, jy = canvas.height - 100
+  // ─── D-Pad (bottom-left) ───
+  const dp = dpadPos()
+  // Outer ring
   ctx.beginPath()
-  ctx.arc(jx, jy, JOYSTICK_RADIUS + 5, 0, Math.PI * 2)
+  ctx.arc(dp.x, dp.y, DPAD_R, 0, Math.PI * 2)
   ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.stroke()
-  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fill()
+  ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fill()
 
-  // Joystick stick
-  let sx = jx, sy = jy
-  if (touchActive && touchJoystickDist > 0) {
-    sx = touchJoystickCenter.x + Math.cos(touchJoystickAngle) * touchJoystickDist
-    sy = touchJoystickCenter.y + Math.sin(touchJoystickAngle) * touchJoystickDist
+  // Direction arrows
+  const drawArrow = (angle: number, active: boolean) => {
+    ctx.save()
+    ctx.translate(dp.x, dp.y)
+    ctx.rotate(angle)
+    ctx.beginPath()
+    ctx.moveTo(DPAD_R - 12, 0)
+    ctx.lineTo(DPAD_R - 28, -10)
+    ctx.lineTo(DPAD_R - 28, 10)
+    ctx.closePath()
+    ctx.fillStyle = active ? 'rgba(0,255,136,0.7)' : 'rgba(255,255,255,0.25)'
+    ctx.fill()
+    ctx.restore()
   }
-  ctx.beginPath()
-  ctx.arc(sx, sy, 22, 0, Math.PI * 2)
-  ctx.fillStyle = touchActive ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.15)'
-  ctx.fill()
-  ctx.strokeStyle = touchActive ? 'rgba(0,255,136,0.7)' : 'rgba(255,255,255,0.3)'
-  ctx.lineWidth = 2; ctx.stroke()
+  drawArrow(-Math.PI / 2, dpad.up)    // Up = thrust
+  drawArrow(Math.PI, dpad.left)        // Left = rotate left
+  drawArrow(0, dpad.right)             // Right = rotate right
 
-  // Fire button
-  const fx = canvas.width - 80, fy = canvas.height - 100
-  ctx.beginPath()
-  ctx.arc(fx, fy, JOYSTICK_RADIUS + 5, 0, Math.PI * 2)
-  ctx.fillStyle = touchFireActive ? 'rgba(255,68,68,0.4)' : 'rgba(255,68,68,0.15)'
-  ctx.fill()
-  ctx.strokeStyle = touchFireActive ? 'rgba(255,68,68,0.8)' : 'rgba(255,68,68,0.4)'
-  ctx.lineWidth = 2; ctx.stroke()
+  // Label
+  ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '10px monospace'; ctx.textAlign = 'center'
+  ctx.fillText('THRUST', dp.x, dp.y - DPAD_R - 8)
 
-  ctx.fillStyle = touchFireActive ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.5)'
+  // ─── Fire Button (bottom-right) ───
+  const fp = firePos()
+  ctx.beginPath()
+  ctx.arc(fp.x, fp.y, BTN_R, 0, Math.PI * 2)
+  ctx.fillStyle = fireActive ? 'rgba(255,68,68,0.45)' : 'rgba(255,68,68,0.12)'
+  ctx.fill()
+  ctx.strokeStyle = fireActive ? 'rgba(255,68,68,0.9)' : 'rgba(255,68,68,0.4)'
+  ctx.lineWidth = 2.5; ctx.stroke()
+  ctx.fillStyle = fireActive ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'
   ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'
-  ctx.fillText('FIRE', fx, fy + 5)
+  ctx.fillText('FIRE', fp.x, fp.y + 6)
+
+  // ─── Hyperspace Button (bottom-right, offset) ───
+  const hp = hyperPos()
+  const hReady = hyperCooldown <= 0
+  ctx.beginPath()
+  ctx.arc(hp.x, hp.y, HYPER_R, 0, Math.PI * 2)
+  ctx.fillStyle = hyperActive && hReady ? 'rgba(80,140,255,0.45)' : (hReady ? 'rgba(80,140,255,0.1)' : 'rgba(100,100,100,0.08)')
+  ctx.fill()
+  ctx.strokeStyle = hReady ? (hyperActive ? 'rgba(80,140,255,0.9)' : 'rgba(80,140,255,0.35)') : 'rgba(100,100,100,0.15)'
+  ctx.lineWidth = 2; ctx.stroke()
+  ctx.fillStyle = hReady ? (hyperActive ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)') : 'rgba(255,255,255,0.15)'
+  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'
+  ctx.fillText('HYPER', hp.x, hp.y + 4)
+
+  // Cooldown arc
+  if (!hReady) {
+    const pct = hyperCooldown / 90
+    ctx.beginPath()
+    ctx.arc(hp.x, hp.y, HYPER_R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - pct))
+    ctx.strokeStyle = 'rgba(80,140,255,0.3)'; ctx.lineWidth = 3; ctx.stroke()
+  }
 }
 
 function drawMenu() {
@@ -469,9 +550,9 @@ function drawMenu() {
 
   ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = `${isPortrait ? 12 : 14}px monospace`
   if (isTouchDevice) {
-    ctx.fillText('LEFT: MOVE    RIGHT: FIRE', canvas.width / 2, canvas.height * 0.65)
+    ctx.fillText('D-PAD: MOVE    FIRE: SHOOT    HYPER: TELEPORT', canvas.width / 2, canvas.height * 0.65)
   } else {
-    ctx.fillText('ARROW KEYS / WASD — MOVE    SPACE — SHOOT', canvas.width / 2, canvas.height * 0.65)
+    ctx.fillText('ARROWS/WASD — MOVE    SPACE — SHOOT    H — HYPERSPACE', canvas.width / 2, canvas.height * 0.65)
   }
 
   if (highScore > 0) {
