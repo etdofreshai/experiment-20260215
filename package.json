@@ -1,0 +1,14 @@
+{
+  "name": "experiment-20260215",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "vite": "^6.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
