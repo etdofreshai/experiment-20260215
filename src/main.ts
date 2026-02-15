@@ -12,6 +12,56 @@ function resize() {
 resize()
 addEventListener('resize', resize)
 
+// ─── Audio (Web Audio API) ───
+const audioCtx = new AudioContext()
+
+function sfxShoot() {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+  o.connect(g); g.connect(audioCtx.destination)
+  o.type = 'square'
+  o.frequency.setValueAtTime(880, audioCtx.currentTime)
+  o.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.1)
+  g.gain.setValueAtTime(0.12, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1)
+  o.start(); o.stop(audioCtx.currentTime + 0.1)
+}
+
+function sfxBoom(big = false) {
+  const len = audioCtx.sampleRate * (big ? 0.35 : 0.15)
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len)
+  const s = audioCtx.createBufferSource(); s.buffer = buf
+  const g = audioCtx.createGain(); s.connect(g); g.connect(audioCtx.destination)
+  g.gain.setValueAtTime(big ? 0.2 : 0.1, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (big ? 0.35 : 0.15))
+  s.start()
+}
+
+function sfxThrust() {
+  const len = audioCtx.sampleRate * 0.04
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
+  const d = buf.getChannelData(0)
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * 0.3 * (1 - i / len)
+  const s = audioCtx.createBufferSource(); s.buffer = buf
+  const g = audioCtx.createGain(); s.connect(g); g.connect(audioCtx.destination)
+  g.gain.setValueAtTime(0.03, audioCtx.currentTime)
+  s.start()
+}
+
+function sfxGameOver() {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+  o.connect(g); g.connect(audioCtx.destination)
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(440, audioCtx.currentTime)
+  o.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.8)
+  g.gain.setValueAtTime(0.15, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8)
+  o.start(); o.stop(audioCtx.currentTime + 0.8)
+}
+
+let thrustTick = 0
+
 // ─── Types ───
 interface Vec2 { x: number; y: number }
 interface Ship { pos: Vec2; vel: Vec2; angle: number; thrust: boolean; radius: number }
@@ -44,8 +94,125 @@ addEventListener('keydown', e => {
   keys[e.code] = true
   if (state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) startGame()
   if (state === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { state = 'menu' }
+  if (state === 'playing' && (e.code === 'KeyH' || e.code === 'ShiftRight')) hyperspace()
 })
 addEventListener('keyup', e => { keys[e.code] = false })
+
+// ─── Touch Controls ───
+const touch: Record<string, boolean> = { left: false, right: false, thrust: false, fire: false, hyperspace: false }
+let touchDpadCenter = { x: 0, y: 0 }
+const DPAD_RADIUS = 50
+const DPAD_DEAD = 15
+const BTN_RADIUS = 35
+
+function isTouchDevice() {
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0
+}
+
+// Track active touches per zone
+const activeTouches: Map<number, string> = new Map()
+
+function classifyTouch(tx: number, ty: number): string {
+  // D-pad zone (left side, bottom)
+  const dCx = 90, dCy = canvas.height - 110
+  touchDpadCenter = { x: dCx, y: dCy }
+  const ddist = Math.hypot(tx - dCx, ty - dCy)
+  if (ddist < DPAD_RADIUS + 40) return 'dpad'
+
+  // Fire button
+  const fCx = canvas.width - 100, fCy = canvas.height - 130
+  if (Math.hypot(tx - fCx, ty - fCy) < BTN_RADIUS + 15) return 'fire'
+
+  // Hyperspace button
+  const hCx = canvas.width - 170, hCy = canvas.height - 70
+  if (Math.hypot(tx - hCx, ty - hCy) < BTN_RADIUS + 10) return 'hyperspace'
+
+  // Tap anywhere else in menu/gameover
+  return 'tap'
+}
+
+function updateDpadFromTouch(tx: number, ty: number) {
+  const dCx = 90, dCy = canvas.height - 110
+  const dx = tx - dCx, dy = ty - dCy
+  const d = Math.hypot(dx, dy)
+  touch.left = false; touch.right = false; touch.thrust = false
+  if (d > DPAD_DEAD) {
+    const angle = Math.atan2(dy, dx)
+    if (angle > 2.3 || angle < -2.3) touch.left = true    // left
+    if (angle > -0.8 && angle < 0.8) touch.right = true   // right
+    if (angle < -0.4 && angle > -2.7) touch.thrust = true  // up
+  }
+}
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault()
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i]
+    const zone = classifyTouch(t.clientX, t.clientY)
+    activeTouches.set(t.identifier, zone)
+
+    if (state === 'menu') { startGame(); continue }
+    if (state === 'gameover') { state = 'menu'; continue }
+
+    if (zone === 'dpad') updateDpadFromTouch(t.clientX, t.clientY)
+    if (zone === 'fire') { touch.fire = true; fireBullet() }
+    if (zone === 'hyperspace') { touch.hyperspace = true; hyperspace() }
+  }
+}, { passive: false })
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault()
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i]
+    if (activeTouches.get(t.identifier) === 'dpad') {
+      updateDpadFromTouch(t.clientX, t.clientY)
+    }
+  }
+}, { passive: false })
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault()
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i]
+    const zone = activeTouches.get(t.identifier)
+    activeTouches.delete(t.identifier)
+    if (zone === 'dpad') { touch.left = false; touch.right = false; touch.thrust = false }
+    if (zone === 'fire') touch.fire = false
+    if (zone === 'hyperspace') touch.hyperspace = false
+  }
+}, { passive: false })
+
+canvas.addEventListener('touchcancel', e => {
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    activeTouches.delete(e.changedTouches[i].identifier)
+  }
+  touch.left = false; touch.right = false; touch.thrust = false
+  touch.fire = false; touch.hyperspace = false
+})
+
+// ─── Hyperspace ───
+let hyperCooldown = 0
+function hyperspace() {
+  if (state !== 'playing' || !shipVisible || hyperCooldown > 0) return
+  spawnParticles(ship.pos.x, ship.pos.y, 10, 2)
+  ship.pos.x = Math.random() * canvas.width
+  ship.pos.y = Math.random() * canvas.height
+  ship.vel.x = 0; ship.vel.y = 0
+  spawnParticles(ship.pos.x, ship.pos.y, 10, 2)
+  hyperCooldown = 90 // 1.5 sec cooldown
+}
+
+function fireBullet() {
+  if (state !== 'playing' || !shipVisible || bullets.length >= 8) return
+  const bSpeed = 8
+  bullets.push({
+    pos: { x: ship.pos.x + Math.cos(ship.angle) * 18, y: ship.pos.y + Math.sin(ship.angle) * 18 },
+    vel: { x: Math.cos(ship.angle) * bSpeed + ship.vel.x * 0.3, y: Math.sin(ship.angle) * bSpeed + ship.vel.y * 0.3 },
+    life: 60
+  })
+}
+
+const showTouch = isTouchDevice()
 
 // ─── Menu animation asteroids ───
 let menuAsteroids: Asteroid[] = []
@@ -63,6 +230,7 @@ initMenuAsteroids()
 
 // ─── Game Init ───
 function startGame() {
+  if (audioCtx.state === 'suspended') audioCtx.resume()
   state = 'playing'
   score = 0
   lives = 3
@@ -171,6 +339,10 @@ function update() {
   if (keys['ArrowRight'] || keys['KeyD']) ship.angle += 0.05
   ship.thrust = !!(keys['ArrowUp'] || keys['KeyW'])
   if (ship.thrust) {
+    thrustTick++
+    if (thrustTick % 4 === 0) sfxThrust()
+  } else { thrustTick = 0 }
+  if (ship.thrust) {
     ship.vel.x += Math.cos(ship.angle) * 0.1
     ship.vel.y += Math.sin(ship.angle) * 0.1
   }
@@ -187,6 +359,8 @@ function update() {
   // Shoot
   if (keys['Space'] && bullets.length < 8) {
     keys['Space'] = false // one shot per press
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    sfxShoot()
     const bSpeed = 8
     bullets.push({
       pos: { x: ship.pos.x + Math.cos(ship.angle) * 18, y: ship.pos.y + Math.sin(ship.angle) * 18 },
@@ -217,6 +391,7 @@ function update() {
       if (!b || !a) continue
       if (dist(b.pos.x, b.pos.y, a.pos.x, a.pos.y) < a.radius) {
         bullets.splice(bi, 1)
+        sfxBoom(a.radius > 20)
         spawnParticles(a.pos.x, a.pos.y, 8)
         if (a.radius > 20) {
           // Split
@@ -240,10 +415,12 @@ function update() {
   if (shipVisible) {
     for (const a of asteroids) {
       if (dist(ship.pos.x, ship.pos.y, a.pos.x, a.pos.y) < a.radius + ship.radius - 5) {
+        sfxBoom(true)
         spawnParticles(ship.pos.x, ship.pos.y, 20, 3)
         shipVisible = false
         lives--
         if (lives <= 0) {
+          sfxGameOver()
           state = 'gameover'
           if (score > highScore) {
             highScore = score
