@@ -44,6 +44,18 @@ function sfxExplosion(big = false) {
   s.start()
 }
 
+function sfxHyperspace() {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+  o.connect(g); g.connect(audioCtx.destination)
+  o.type = 'sine'
+  o.frequency.setValueAtTime(200, audioCtx.currentTime)
+  o.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2)
+  o.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.4)
+  g.gain.setValueAtTime(0.15, audioCtx.currentTime)
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4)
+  o.start(); o.stop(audioCtx.currentTime + 0.4)
+}
+
 function sfxThrust() {
   const len = audioCtx.sampleRate * 0.05
   const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
@@ -119,6 +131,8 @@ let dpadTouchId: number | null = null
 let fireActive = false
 let fireTouchId: number | null = null
 let fireAutoTimer: ReturnType<typeof setInterval> | null = null
+let hyperspaceActive = false
+let hyperspaceTouchId: number | null = null
 
 const DPAD_R = 55
 const DPAD_DEAD = 14
@@ -130,7 +144,8 @@ let joystickThumb: Vec2 = { x: 0, y: 0 }
 const JOYSTICK_ZONE_X = 0.5  // left half of screen is joystick zone
 
 function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } }
-function firePos() { return { x: canvas.width - 85, y: canvas.height - 140 } }
+function firePos() { return { x: canvas.width - 85, y: canvas.height - 280 } }
+function hyperspacePos() { return { x: canvas.width - 85, y: canvas.height - 170 } }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
   return Math.hypot(tx - cx, ty - cy) < r + 20
@@ -186,7 +201,7 @@ canvas.addEventListener('touchstart', e => {
 
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    const dp = dpadPos(), fp = firePos()
+    const dp = dpadPos(), fp = firePos(), hp = hyperspacePos()
     if (dpadTouchId === null && t.clientX < canvas.width * JOYSTICK_ZONE_X) {
       dpadTouchId = t.identifier
       joystickCenter = { x: t.clientX, y: t.clientY }
@@ -196,6 +211,8 @@ canvas.addEventListener('touchstart', e => {
     } else if (hitTest(t.clientX, t.clientY, fp.x, fp.y, BTN_R)) {
       fireTouchId = t.identifier; fireActive = true; shootBullet()
       if (!fireAutoTimer) fireAutoTimer = setInterval(() => { if (fireActive) shootBullet() }, 180)
+    } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, BTN_R)) {
+      hyperspaceTouchId = t.identifier; hyperspaceActive = true; activateHyperspace()
     }
   }
 }, { passive: false })
@@ -214,6 +231,7 @@ canvas.addEventListener('touchend', e => {
     const t = e.changedTouches[i]
     if (t.identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false; dpadAngle = null }
     if (t.identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
+    if (t.identifier === hyperspaceTouchId) { hyperspaceTouchId = null; hyperspaceActive = false }
   }
 }, { passive: false })
 
@@ -221,6 +239,7 @@ canvas.addEventListener('touchcancel', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     if (e.changedTouches[i].identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false; dpadAngle = null }
     if (e.changedTouches[i].identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
+    if (e.changedTouches[i].identifier === hyperspaceTouchId) { hyperspaceTouchId = null; hyperspaceActive = false }
   }
 })
 
@@ -243,6 +262,28 @@ function shootBullet() {
     vel: { x: Math.cos(ship.angle) * bSpeed + ship.vel.x * 0.3, y: Math.sin(ship.angle) * bSpeed + ship.vel.y * 0.3 },
     life: 60
   })
+}
+
+function activateHyperspace() {
+  if (state !== 'playing' || !shipVisible) return
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+  sfxHyperspace()
+  spawnDestructionParticles(ship.pos.x, ship.pos.y, 8)
+  ship.pos.x = Math.random() * canvas.width
+  ship.pos.y = Math.random() * canvas.height
+  ship.vel.x = 0; ship.vel.y = 0
+  spawnDestructionParticles(ship.pos.x, ship.pos.y, 8)
+  // Small chance of death on hyperspace (classic!)
+  if (Math.random() < 0.1) {
+    spawnDestructionParticles(ship.pos.x, ship.pos.y, 20)
+    sfxExplosion(true)
+    shipVisible = false
+    lives--
+    if (lives <= 0) {
+      state = 'gameover'
+      if (score > highScore) { highScore = score; localStorage.setItem('asteroids-hi', String(highScore)) }
+    } else { respawnTimer = 120 }
+  }
 }
 
 // ─── Menu animation asteroids ───
@@ -412,6 +453,7 @@ function update() {
   wrap(ship.pos)
 
   if (keys['Space']) { keys['Space'] = false; shootBullet() }
+  if (keys['ShiftLeft'] || keys['ShiftRight']) { keys['ShiftLeft'] = false; keys['ShiftRight'] = false; activateHyperspace() }
 
   // Bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
@@ -673,6 +715,18 @@ function drawTouchControls() {
   ctx.fillStyle = fireActive ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'
   ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'
   ctx.fillText('FIRE', fp.x, fp.y + 5)
+
+  // Hyperspace button
+  const hp = hyperspacePos()
+  ctx.beginPath()
+  ctx.arc(hp.x, hp.y, BTN_R, 0, Math.PI * 2)
+  ctx.fillStyle = hyperspaceActive ? 'rgba(100,150,255,0.35)' : 'rgba(100,150,255,0.1)'
+  ctx.fill()
+  ctx.strokeStyle = hyperspaceActive ? 'rgba(100,150,255,0.9)' : 'rgba(100,150,255,0.4)'
+  ctx.lineWidth = 2.5; ctx.stroke()
+  ctx.fillStyle = hyperspaceActive ? 'rgba(150,200,255,0.95)' : 'rgba(100,150,255,0.5)'
+  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'
+  ctx.fillText('HYPER', hp.x, hp.y + 4)
 }
 
 function drawMenu() {
