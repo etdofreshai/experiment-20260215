@@ -283,6 +283,16 @@ canvas.addEventListener('touchstart', e => {
     return
   }
 
+  // Check pause button first (before joystick/fire)
+  {
+    const t0 = e.changedTouches[0]
+    const pb = pauseBtnBounds()
+    if (t0.clientX >= pb.x - 10 && t0.clientX <= pb.x + pb.w + 10 &&
+        t0.clientY >= pb.y - 10 && t0.clientY <= pb.y + pb.h + 10) {
+      paused = !paused; return
+    }
+  }
+
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
     const dp = dpadPos(), fp = firePos(), hp = hyperspacePos()
@@ -342,7 +352,7 @@ let ctrlToggleBounds = { x: 0, y: 0, w: 0, h: 0 }
 // Pause button bounds (top right)
 const PAUSE_BTN_SIZE = 36
 function pauseBtnBounds() {
-  return { x: canvas.width - PAUSE_BTN_SIZE - 50, y: 8, w: PAUSE_BTN_SIZE, h: PAUSE_BTN_SIZE }
+  return { x: canvas.width - PAUSE_BTN_SIZE - 15, y: 42, w: PAUSE_BTN_SIZE, h: PAUSE_BTN_SIZE }
 }
 
 // Click/tap pause button
