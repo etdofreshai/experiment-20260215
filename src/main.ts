@@ -114,7 +114,12 @@ const DPAD_R = 55
 const DPAD_DEAD = 14
 const BTN_R = 38
 
-function dpadPos() { return { x: 90, y: canvas.height - 280 } }
+// Floating joystick state
+let joystickCenter: Vec2 | null = null  // null when not touching
+let joystickThumb: Vec2 = { x: 0, y: 0 }
+const JOYSTICK_ZONE_X = 0.5  // left half of screen is joystick zone
+
+function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } }
 function firePos() { return { x: canvas.width - 85, y: canvas.height - 140 } }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
@@ -122,12 +127,27 @@ function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
 }
 
 function updateDpad(tx: number, ty: number) {
-  const c = dpadPos()
-  const dx = tx - c.x, dy = ty - c.y
+  if (!joystickCenter) return
+  const dx = tx - joystickCenter.x, dy = ty - joystickCenter.y
   const d = Math.hypot(dx, dy)
+
+  // If thumb exceeds radius, drag the center so thumb stays on the edge
+  if (d > DPAD_R) {
+    const nx = dx / d, ny = dy / d
+    joystickCenter.x = tx - nx * DPAD_R
+    joystickCenter.y = ty - ny * DPAD_R
+  }
+
+  // Update thumb position (clamped to radius for visual)
+  joystickThumb.x = tx
+  joystickThumb.y = ty
+
+  // Recalculate direction from (possibly moved) center
+  const fdx = tx - joystickCenter.x, fdy = ty - joystickCenter.y
+  const fd = Math.hypot(fdx, fdy)
   dpad.left = false; dpad.right = false; dpad.up = false
-  if (d > DPAD_DEAD) {
-    const a = Math.atan2(dy, dx)
+  if (fd > DPAD_DEAD) {
+    const a = Math.atan2(fdy, fdx)
     if (a < -0.3 && a > -2.8) dpad.up = true
     if (a > 2.2 || a < -2.2) dpad.left = true
     if (a > -0.9 && a < 0.9) dpad.right = true
@@ -143,8 +163,12 @@ canvas.addEventListener('touchstart', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
     const dp = dpadPos(), fp = firePos()
-    if (dpadTouchId === null && hitTest(t.clientX, t.clientY, dp.x, dp.y, DPAD_R)) {
-      dpadTouchId = t.identifier; updateDpad(t.clientX, t.clientY)
+    if (dpadTouchId === null && t.clientX < canvas.width * JOYSTICK_ZONE_X) {
+      dpadTouchId = t.identifier
+      joystickCenter = { x: t.clientX, y: t.clientY }
+      joystickThumb = { x: t.clientX, y: t.clientY }
+      // No direction yet — finger just landed on center
+      dpad.left = false; dpad.right = false; dpad.up = false
     } else if (hitTest(t.clientX, t.clientY, fp.x, fp.y, BTN_R)) {
       fireTouchId = t.identifier; fireActive = true; shootBullet()
       if (!fireAutoTimer) fireAutoTimer = setInterval(() => { if (fireActive) shootBullet() }, 180)
@@ -164,14 +188,14 @@ canvas.addEventListener('touchend', e => {
   e.preventDefault()
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    if (t.identifier === dpadTouchId) { dpadTouchId = null; dpad.left = false; dpad.right = false; dpad.up = false }
+    if (t.identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false }
     if (t.identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
   }
 }, { passive: false })
 
 canvas.addEventListener('touchcancel', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
-    if (e.changedTouches[i].identifier === dpadTouchId) { dpadTouchId = null; dpad.left = false; dpad.right = false; dpad.up = false }
+    if (e.changedTouches[i].identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false }
     if (e.changedTouches[i].identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
   }
 })
@@ -513,31 +537,44 @@ function drawHUD() {
 function drawTouchControls() {
   if (!isTouchDevice || state !== 'playing') return
 
-  const dp = dpadPos()
-  ctx.beginPath()
-  ctx.arc(dp.x, dp.y, DPAD_R, 0, Math.PI * 2)
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.stroke()
-  ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fill()
+  if (joystickCenter) {
+    const dp = joystickCenter
 
-  const drawArrow = (angle: number, active: boolean) => {
-    ctx.save()
-    ctx.translate(dp.x, dp.y)
-    ctx.rotate(angle)
+    // Outer ring
     ctx.beginPath()
-    ctx.moveTo(DPAD_R - 12, 0)
-    ctx.lineTo(DPAD_R - 28, -10)
-    ctx.lineTo(DPAD_R - 28, 10)
-    ctx.closePath()
-    ctx.fillStyle = active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
-    ctx.fill()
-    ctx.restore()
-  }
-  drawArrow(-Math.PI / 2, dpad.up)
-  drawArrow(Math.PI, dpad.left)
-  drawArrow(0, dpad.right)
+    ctx.arc(dp.x, dp.y, DPAD_R, 0, Math.PI * 2)
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fill()
 
-  ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '10px monospace'; ctx.textAlign = 'center'
-  ctx.fillText('MOVE', dp.x, dp.y - DPAD_R - 8)
+    // Thumb nub — clamped to radius
+    const tdx = joystickThumb.x - dp.x, tdy = joystickThumb.y - dp.y
+    const td = Math.hypot(tdx, tdy)
+    const clamp = Math.min(td, DPAD_R)
+    const nx = td > 0 ? tdx / td * clamp : 0
+    const ny = td > 0 ? tdy / td * clamp : 0
+    ctx.beginPath()
+    ctx.arc(dp.x + nx, dp.y + ny, 18, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.5; ctx.stroke()
+
+    // Direction arrows
+    const drawArrow = (angle: number, active: boolean) => {
+      ctx.save()
+      ctx.translate(dp.x, dp.y)
+      ctx.rotate(angle)
+      ctx.beginPath()
+      ctx.moveTo(DPAD_R - 12, 0)
+      ctx.lineTo(DPAD_R - 28, -10)
+      ctx.lineTo(DPAD_R - 28, 10)
+      ctx.closePath()
+      ctx.fillStyle = active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
+      ctx.fill()
+      ctx.restore()
+    }
+    drawArrow(-Math.PI / 2, dpad.up)
+    drawArrow(Math.PI, dpad.left)
+    drawArrow(0, dpad.right)
+  }
 
   const fp = firePos()
   ctx.beginPath()
