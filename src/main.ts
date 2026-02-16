@@ -199,8 +199,8 @@ let fireActive = false
 let fireTouchId: number | null = null
 let fireAutoTimer: ReturnType<typeof setInterval> | null = null
 let firePos_: Vec2 | null = null  // where the fire button currently is (follows thumb)
-let fireOpacity = 0.1  // 0.1 = idle, 1 = active; fades to 10% after release
-let dpadOpacity = 0.1  // 0.1 = idle, 1 = active; fades to 10%
+let fireOpacity = 0.35  // 0.35 = idle, 1 = active; fades to 35% after release
+let dpadOpacity = 0.35  // 0.35 = idle, 1 = active; fades to 35%
 let hyperspaceActive = false
 let hyperspaceTouchId: number | null = null
 
@@ -281,7 +281,8 @@ canvas.addEventListener('touchstart', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
     const dp = dpadPos(), fp = firePos(), hp = hyperspacePos()
-    if (dpadTouchId === null && t.clientX < canvas.width * JOYSTICK_ZONE_X) {
+    const TOUCH_TOP_LIMIT = canvas.height * 0.3  // only allow controls in bottom 70%
+    if (dpadTouchId === null && t.clientX < canvas.width * JOYSTICK_ZONE_X && t.clientY > TOUCH_TOP_LIMIT) {
       dpadTouchId = t.identifier
       joystickCenter = { x: t.clientX, y: t.clientY }
       joystickThumb = { x: t.clientX, y: t.clientY }
@@ -289,7 +290,7 @@ canvas.addEventListener('touchstart', e => {
       dpad.left = false; dpad.right = false; dpad.up = false
     } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, HYPER_R)) {
       hyperspaceTouchId = t.identifier; hyperspaceActive = true; activateHyperspace()
-    } else if (fireTouchId === null && t.clientX > canvas.width * JOYSTICK_ZONE_X) {
+    } else if (fireTouchId === null && t.clientX > canvas.width * JOYSTICK_ZONE_X && t.clientY > TOUCH_TOP_LIMIT) {
       fireTouchId = t.identifier; fireActive = true; fireOpacity = 1
       firePos_ = { x: t.clientX, y: t.clientY }
       shootBullet()
@@ -655,13 +656,13 @@ function update() {
   if (dpadTouchId !== null) { dpadOpacity = 1 }
   else if (dpadOpacity > 0.1) {
     dpadOpacity -= 0.02
-    if (dpadOpacity <= 0.1) { dpadOpacity = 0.1 }
+    if (dpadOpacity <= 0.35) { dpadOpacity = 0.35 }
   }
 
   if (fireActive) { fireOpacity = 1 }
   else if (fireOpacity > 0.1) {
     fireOpacity -= 0.02  // fade over ~45 frames (~0.75s)
-    if (fireOpacity <= 0.1) { fireOpacity = 0.1 }
+    if (fireOpacity <= 0.35) { fireOpacity = 0.35 }
   }
 
   updateParticles()
