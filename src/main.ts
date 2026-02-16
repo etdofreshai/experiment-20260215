@@ -95,6 +95,8 @@ let respawnTimer = 0
 let shipVisible = true
 let thrustTick = 0
 let frameCount = 0
+let invulnerableTimer = 0
+const INVULNERABLE_DURATION = 180 // 3 seconds at 60fps
 
 // ─── Input ───
 const keys: Record<string, boolean> = {}
@@ -260,6 +262,7 @@ function startGame() {
   score = 0; lives = 3; level = 1
   bullets = []; asteroids = []; particles = []
   respawnTimer = 0; shipVisible = true
+  invulnerableTimer = INVULNERABLE_DURATION
   resetShip()
   spawnAsteroids(5)
 }
@@ -335,7 +338,7 @@ function update() {
 
   if (respawnTimer > 0) {
     respawnTimer--
-    if (respawnTimer === 0) { resetShip(); shipVisible = true }
+    if (respawnTimer === 0) { resetShip(); shipVisible = true; invulnerableTimer = INVULNERABLE_DURATION }
     for (const ast of asteroids) {
       ast.pos.x += ast.vel.x; ast.pos.y += ast.vel.y
       ast.rot += ast.rotSpeed
@@ -447,8 +450,11 @@ function update() {
     }
   }
 
+  // Invulnerability countdown
+  if (invulnerableTimer > 0) invulnerableTimer--
+
   // Ship-Asteroid collision
-  if (shipVisible) {
+  if (shipVisible && invulnerableTimer <= 0) {
     for (const ast of asteroids) {
       if (dist(ship.pos.x, ship.pos.y, ast.pos.x, ast.pos.y) < ast.radius + ship.radius - 5) {
         spawnDestructionParticles(ship.pos.x, ship.pos.y, 20)
@@ -516,6 +522,7 @@ function drawAsteroid(ast: Asteroid) {
 
 function drawShip() {
   if (!shipVisible) return
+  if (invulnerableTimer > 0 && Math.floor(frameCount / 4) % 2 === 0) return
   ctx.save()
   ctx.translate(ship.pos.x, ship.pos.y)
   ctx.rotate(ship.angle)
