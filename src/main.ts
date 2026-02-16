@@ -970,6 +970,16 @@ function draw() {
   else if (state === 'playing') {
     for (const ast of asteroids) drawAsteroid(ast)
     drawShip(); drawBullets(); drawParticles(); drawHUD(); drawTouchControls()
+    if (paused) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = '#ffffff'; ctx.font = `bold ${isPortrait ? 36 : 48}px monospace`
+      ctx.textAlign = 'center'
+      ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2)
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = `${isPortrait ? 14 : 18}px monospace`
+      const resumeText = isTouchDevice ? 'TAP ▶ TO RESUME' : 'PRESS P OR ESC TO RESUME'
+      ctx.fillText(resumeText, canvas.width / 2, canvas.height / 2 + 40)
+    }
   } else if (state === 'gameover') {
     for (const ast of asteroids) drawAsteroid(ast)
     drawParticles(); drawHUD(); drawGameOver()
