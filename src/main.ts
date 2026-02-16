@@ -106,11 +106,9 @@ let particles: Particle[] = []
 let respawnTimer = 0
 let shipVisible = true
 let invulnerableTimer = 0
-const INVULNERABLE_FRAMES = 180 // 3 seconds at 60fps
+const INVULNERABLE_DURATION = 180 // 3 seconds at 60fps
 let thrustTick = 0
 let frameCount = 0
-let invulnerableTimer = 0
-const INVULNERABLE_DURATION = 180 // 3 seconds at 60fps
 
 // ─── Input ───
 const keys: Record<string, boolean> = {}
@@ -131,6 +129,8 @@ let dpadTouchId: number | null = null
 let fireActive = false
 let fireTouchId: number | null = null
 let fireAutoTimer: ReturnType<typeof setInterval> | null = null
+let firePos_: Vec2 | null = null  // where the fire button currently is (follows thumb)
+let fireOpacity = 0  // 0 = transparent, 1 = opaque; fades after release
 let hyperspaceActive = false
 let hyperspaceTouchId: number | null = null
 
@@ -144,7 +144,7 @@ let joystickThumb: Vec2 = { x: 0, y: 0 }
 const JOYSTICK_ZONE_X = 0.5  // left half of screen is joystick zone
 
 function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } }
-function firePos() { return { x: canvas.width - 85, y: canvas.height - 280 } }
+function firePos() { return firePos_ || { x: canvas.width - 85, y: canvas.height - 280 } }
 function hyperspacePos() { return { x: canvas.width - 85, y: canvas.height - 170 } }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
@@ -208,11 +208,13 @@ canvas.addEventListener('touchstart', e => {
       joystickThumb = { x: t.clientX, y: t.clientY }
       // No direction yet — finger just landed on center
       dpad.left = false; dpad.right = false; dpad.up = false
-    } else if (hitTest(t.clientX, t.clientY, fp.x, fp.y, BTN_R)) {
-      fireTouchId = t.identifier; fireActive = true; shootBullet()
-      if (!fireAutoTimer) fireAutoTimer = setInterval(() => { if (fireActive) shootBullet() }, 180)
     } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, BTN_R)) {
       hyperspaceTouchId = t.identifier; hyperspaceActive = true; activateHyperspace()
+    } else if (fireTouchId === null && t.clientX > canvas.width * JOYSTICK_ZONE_X) {
+      fireTouchId = t.identifier; fireActive = true; fireOpacity = 1
+      firePos_ = { x: t.clientX, y: t.clientY }
+      shootBullet()
+      if (!fireAutoTimer) fireAutoTimer = setInterval(() => { if (fireActive) shootBullet() }, 180)
     }
   }
 }, { passive: false })
@@ -222,6 +224,7 @@ canvas.addEventListener('touchmove', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
     if (t.identifier === dpadTouchId) updateDpad(t.clientX, t.clientY)
+    if (t.identifier === fireTouchId) { firePos_ = { x: t.clientX, y: t.clientY } }
   }
 }, { passive: false })
 
@@ -230,7 +233,7 @@ canvas.addEventListener('touchend', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
     if (t.identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false; dpadAngle = null }
-    if (t.identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
+    if (t.identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } /* firePos_ kept for fade */ }
     if (t.identifier === hyperspaceTouchId) { hyperspaceTouchId = null; hyperspaceActive = false }
   }
 }, { passive: false })
@@ -304,12 +307,8 @@ function startGame() {
   state = 'playing'
   score = 0; lives = 3; level = 1
   bullets = []; asteroids = []; particles = []
-<<<<<<< HEAD
   respawnTimer = 0; shipVisible = true
   invulnerableTimer = INVULNERABLE_DURATION
-=======
-  respawnTimer = 0; shipVisible = true; invulnerableTimer = INVULNERABLE_FRAMES
->>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
   resetShip()
   spawnAsteroids(5)
 }
@@ -385,11 +384,7 @@ function update() {
 
   if (respawnTimer > 0) {
     respawnTimer--
-<<<<<<< HEAD
     if (respawnTimer === 0) { resetShip(); shipVisible = true; invulnerableTimer = INVULNERABLE_DURATION }
-=======
-    if (respawnTimer === 0) { resetShip(); shipVisible = true; invulnerableTimer = INVULNERABLE_FRAMES }
->>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
     for (const ast of asteroids) {
       ast.pos.x += ast.vel.x; ast.pos.y += ast.vel.y
       ast.rot += ast.rotSpeed
@@ -523,6 +518,14 @@ function update() {
   }
 
   if (asteroids.length === 0) { level++; spawnAsteroids(4 + level) }
+
+  // Fire button opacity fade
+  if (fireActive) { fireOpacity = 1 }
+  else if (fireOpacity > 0) {
+    fireOpacity -= 0.02  // fade over ~50 frames (~0.8s)
+    if (fireOpacity <= 0) { fireOpacity = 0; firePos_ = null }
+  }
+
   updateParticles()
 }
 
@@ -574,10 +577,7 @@ function drawAsteroid(ast: Asteroid) {
 
 function drawShip() {
   if (!shipVisible) return
-<<<<<<< HEAD
-=======
   // Flash when invulnerable (toggle every 4 frames)
->>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
   if (invulnerableTimer > 0 && Math.floor(frameCount / 4) % 2 === 0) return
   ctx.save()
   ctx.translate(ship.pos.x, ship.pos.y)
@@ -706,15 +706,19 @@ function drawTouchControls() {
   }
 
   const fp = firePos()
-  ctx.beginPath()
-  ctx.arc(fp.x, fp.y, BTN_R, 0, Math.PI * 2)
-  ctx.fillStyle = fireActive ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)'
-  ctx.fill()
-  ctx.strokeStyle = fireActive ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)'
-  ctx.lineWidth = 2.5; ctx.stroke()
-  ctx.fillStyle = fireActive ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)'
-  ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'
-  ctx.fillText('FIRE', fp.x, fp.y + 5)
+  const fo = fireOpacity  // 0..1
+  if (fo > 0 || fireActive) {
+    const alpha = fireActive ? 1 : fo
+    ctx.beginPath()
+    ctx.arc(fp.x, fp.y, BTN_R, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255,255,255,${(fireActive ? 0.35 : 0.1) * alpha})`
+    ctx.fill()
+    ctx.strokeStyle = `rgba(255,255,255,${(fireActive ? 0.9 : 0.4) * alpha})`
+    ctx.lineWidth = 2.5; ctx.stroke()
+    ctx.fillStyle = `rgba(255,255,255,${(fireActive ? 0.95 : 0.5) * alpha})`
+    ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'
+    ctx.fillText('FIRE', fp.x, fp.y + 5)
+  }
 
   // Hyperspace button
   const hp = hyperspacePos()
