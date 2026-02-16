@@ -176,6 +176,7 @@ let invulnerableTimer = 0
 const INVULNERABLE_DURATION = 180 // 3 seconds at 60fps
 let thrustTick = 0
 let frameCount = 0
+let paused = false
 
 // ─── Input ───
 const keys: Record<string, boolean> = {}
@@ -184,6 +185,7 @@ addEventListener('keydown', e => {
   if (state === 'menu' && e.code === 'Tab') { e.preventDefault(); toggleControlMode() }
   if (state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) startGame()
   if (state === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { state = 'menu' }
+  if (state === 'playing' && (e.code === 'Escape' || e.code === 'KeyP')) { paused = !paused }
 })
 addEventListener('keyup', e => { keys[e.code] = false })
 
@@ -331,6 +333,21 @@ function toggleControlMode() {
 // Control mode toggle button bounds (set during drawMenu)
 let ctrlToggleBounds = { x: 0, y: 0, w: 0, h: 0 }
 
+// Pause button bounds (top right)
+const PAUSE_BTN_SIZE = 36
+function pauseBtnBounds() {
+  return { x: canvas.width - PAUSE_BTN_SIZE - 50, y: 8, w: PAUSE_BTN_SIZE, h: PAUSE_BTN_SIZE }
+}
+
+// Click/tap pause button
+canvas.addEventListener('click', e => {
+  if (state !== 'playing') return
+  const pb = pauseBtnBounds()
+  if (e.clientX >= pb.x && e.clientX <= pb.x + pb.w && e.clientY >= pb.y && e.clientY <= pb.y + pb.h) {
+    paused = !paused
+  }
+})
+
 // ─── Actions ───
 function shootBullet() {
   if (state !== 'playing' || !shipVisible || bullets.length >= 8) return
@@ -458,6 +475,7 @@ function update() {
     return
   }
   if (state === 'gameover') return
+  if (paused) return
 
   if (respawnTimer > 0) {
     respawnTimer--
@@ -540,6 +558,42 @@ function update() {
     ast.pos.x += ast.vel.x; ast.pos.y += ast.vel.y
     ast.rot += ast.rotSpeed
     wrap(ast.pos)
+  }
+
+  // Asteroid-Asteroid collisions (elastic bounce)
+  for (let i = 0; i < asteroids.length; i++) {
+    for (let j = i + 1; j < asteroids.length; j++) {
+      const a = asteroids[i], b = asteroids[j]
+      const dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y
+      const d = Math.hypot(dx, dy)
+      const minDist = a.radius * 0.7 + b.radius * 0.7
+      if (d > 0 && d < minDist) {
+        // Normal vector
+        const nx = dx / d, ny = dy / d
+        // Separate overlapping asteroids
+        const overlap = (minDist - d) / 2
+        a.pos.x -= nx * overlap
+        a.pos.y -= ny * overlap
+        b.pos.x += nx * overlap
+        b.pos.y += ny * overlap
+        // Relative velocity along normal
+        const dvx = a.vel.x - b.vel.x, dvy = a.vel.y - b.vel.y
+        const dvn = dvx * nx + dvy * ny
+        // Only resolve if moving toward each other
+        if (dvn > 0) {
+          // Mass proportional to radius squared
+          const ma = a.radius * a.radius, mb = b.radius * b.radius
+          const impulse = (2 * dvn) / (ma + mb)
+          a.vel.x -= impulse * mb * nx
+          a.vel.y -= impulse * mb * ny
+          b.vel.x += impulse * ma * nx
+          b.vel.y += impulse * ma * ny
+          // Small particles on impact
+          const cx = (a.pos.x + b.pos.x) / 2, cy = (a.pos.y + b.pos.y) / 2
+          spawnDestructionParticles(cx, cy, 3)
+        }
+      }
+    }
   }
 
   // Bullet-Asteroid collision
@@ -742,6 +796,30 @@ function drawHUD() {
   ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = `${isPortrait ? 12 : 14}px monospace`
   ctx.textAlign = 'center'
   ctx.fillText(`WAVE ${level}`, canvas.width / 2, 25)
+
+  // Pause button (top right)
+  const pb = pauseBtnBounds()
+  const cx = pb.x + pb.w / 2, cy = pb.y + pb.h / 2
+  ctx.strokeStyle = `rgba(255,255,255,${paused ? 0.9 : 0.4})`
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc(cx, cy, pb.w / 2, 0, Math.PI * 2)
+  ctx.stroke()
+  if (paused) {
+    // Draw play triangle
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'
+    ctx.beginPath()
+    ctx.moveTo(cx - 5, cy - 8)
+    ctx.lineTo(cx - 5, cy + 8)
+    ctx.lineTo(cx + 8, cy)
+    ctx.closePath()
+    ctx.fill()
+  } else {
+    // Draw pause bars
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'
+    ctx.fillRect(cx - 6, cy - 7, 4, 14)
+    ctx.fillRect(cx + 2, cy - 7, 4, 14)
+  }
 }
 
 function drawTouchControls() {
