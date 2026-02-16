@@ -93,6 +93,8 @@ let asteroids: Asteroid[] = []
 let particles: Particle[] = []
 let respawnTimer = 0
 let shipVisible = true
+let invulnerableTimer = 0
+const INVULNERABLE_FRAMES = 180 // 3 seconds at 60fps
 let thrustTick = 0
 let frameCount = 0
 let invulnerableTimer = 0
@@ -261,8 +263,12 @@ function startGame() {
   state = 'playing'
   score = 0; lives = 3; level = 1
   bullets = []; asteroids = []; particles = []
+<<<<<<< HEAD
   respawnTimer = 0; shipVisible = true
   invulnerableTimer = INVULNERABLE_DURATION
+=======
+  respawnTimer = 0; shipVisible = true; invulnerableTimer = INVULNERABLE_FRAMES
+>>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
   resetShip()
   spawnAsteroids(5)
 }
@@ -338,7 +344,11 @@ function update() {
 
   if (respawnTimer > 0) {
     respawnTimer--
+<<<<<<< HEAD
     if (respawnTimer === 0) { resetShip(); shipVisible = true; invulnerableTimer = INVULNERABLE_DURATION }
+=======
+    if (respawnTimer === 0) { resetShip(); shipVisible = true; invulnerableTimer = INVULNERABLE_FRAMES }
+>>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
     for (const ast of asteroids) {
       ast.pos.x += ast.vel.x; ast.pos.y += ast.vel.y
       ast.rot += ast.rotSpeed
@@ -522,6 +532,10 @@ function drawAsteroid(ast: Asteroid) {
 
 function drawShip() {
   if (!shipVisible) return
+<<<<<<< HEAD
+=======
+  // Flash when invulnerable (toggle every 4 frames)
+>>>>>>> b552114 (Add spawn invulnerability with flashing effect (3 seconds))
   if (invulnerableTimer > 0 && Math.floor(frameCount / 4) % 2 === 0) return
   ctx.save()
   ctx.translate(ship.pos.x, ship.pos.y)
