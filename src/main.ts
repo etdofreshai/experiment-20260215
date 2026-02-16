@@ -114,7 +114,7 @@ const DPAD_R = 55
 const DPAD_DEAD = 14
 const BTN_R = 38
 
-function dpadPos() { return { x: 90, y: canvas.height - 180 } }
+function dpadPos() { return { x: 90, y: canvas.height - 280 } }
 function firePos() { return { x: canvas.width - 85, y: canvas.height - 140 } }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
