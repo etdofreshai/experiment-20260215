@@ -30,18 +30,85 @@ function sfxLaser() {
 }
 
 function sfxExplosion(big = false) {
-  const len = audioCtx.sampleRate * (big ? 0.4 : 0.2)
-  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate)
-  const d = buf.getChannelData(0)
-  for (let i = 0; i < len; i++) {
-    const t = i / audioCtx.sampleRate
-    d[i] = (Math.random() * 2 - 1) * (1 - i / len) * Math.sin(t * 120) * 0.8
+  const t = audioCtx.currentTime
+  const duration = big ? 1.2 : 0.6
+
+  // Layer 1: Deep sub-bass rumble (shaped noise through biquad)
+  const noiseLen = audioCtx.sampleRate * duration
+  const noiseBuf = audioCtx.createBuffer(1, noiseLen, audioCtx.sampleRate)
+  const nd = noiseBuf.getChannelData(0)
+  for (let i = 0; i < noiseLen; i++) {
+    nd[i] = Math.random() * 2 - 1
   }
-  const s = audioCtx.createBufferSource(); s.buffer = buf
-  const g = audioCtx.createGain(); s.connect(g); g.connect(audioCtx.destination)
-  g.gain.setValueAtTime(big ? 0.25 : 0.15, audioCtx.currentTime)
-  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (big ? 0.4 : 0.2))
-  s.start()
+  const noiseSrc = audioCtx.createBufferSource()
+  noiseSrc.buffer = noiseBuf
+  const lp = audioCtx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.setValueAtTime(big ? 120 : 200, t)
+  lp.frequency.exponentialRampToValueAtTime(30, t + duration)
+  lp.Q.value = 1.5
+  const noiseGain = audioCtx.createGain()
+  noiseGain.gain.setValueAtTime(big ? 0.5 : 0.3, t)
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t + duration)
+  noiseSrc.connect(lp)
+  lp.connect(noiseGain)
+  noiseGain.connect(audioCtx.destination)
+  noiseSrc.start(t)
+  noiseSrc.stop(t + duration)
+
+  // Layer 2: Mid-freq crunch (bandpass noise for body)
+  const crunchSrc = audioCtx.createBufferSource()
+  crunchSrc.buffer = noiseBuf
+  const bp = audioCtx.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.frequency.setValueAtTime(big ? 300 : 400, t)
+  bp.frequency.exponentialRampToValueAtTime(80, t + duration * 0.6)
+  bp.Q.value = 0.8
+  const crunchGain = audioCtx.createGain()
+  crunchGain.gain.setValueAtTime(big ? 0.3 : 0.2, t)
+  crunchGain.gain.exponentialRampToValueAtTime(0.001, t + duration * 0.5)
+  crunchSrc.connect(bp)
+  bp.connect(crunchGain)
+  crunchGain.connect(audioCtx.destination)
+  crunchSrc.start(t)
+  crunchSrc.stop(t + duration)
+
+  // Layer 3: Initial transient click/punch
+  const clickOsc = audioCtx.createOscillator()
+  const clickGain = audioCtx.createGain()
+  clickOsc.type = 'sine'
+  clickOsc.frequency.setValueAtTime(big ? 80 : 100, t)
+  clickOsc.frequency.exponentialRampToValueAtTime(20, t + 0.15)
+  clickGain.gain.setValueAtTime(big ? 0.4 : 0.25, t)
+  clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15)
+  clickOsc.connect(clickGain)
+  clickGain.connect(audioCtx.destination)
+  clickOsc.start(t)
+  clickOsc.stop(t + 0.15)
+
+  // Layer 4: Distortion-like overtones via waveshaper on noise
+  const distSrc = audioCtx.createBufferSource()
+  distSrc.buffer = noiseBuf
+  const distLP = audioCtx.createBiquadFilter()
+  distLP.type = 'lowpass'
+  distLP.frequency.setValueAtTime(big ? 500 : 600, t)
+  distLP.frequency.exponentialRampToValueAtTime(40, t + duration * 0.8)
+  const waveshaper = audioCtx.createWaveShaper()
+  const curve = new Float32Array(256)
+  for (let i = 0; i < 256; i++) {
+    const x = (i / 128) - 1
+    curve[i] = Math.tanh(x * 3)
+  }
+  waveshaper.curve = curve
+  const distGain = audioCtx.createGain()
+  distGain.gain.setValueAtTime(big ? 0.15 : 0.08, t)
+  distGain.gain.exponentialRampToValueAtTime(0.001, t + duration * 0.7)
+  distSrc.connect(distLP)
+  distLP.connect(waveshaper)
+  waveshaper.connect(distGain)
+  distGain.connect(audioCtx.destination)
+  distSrc.start(t)
+  distSrc.stop(t + duration)
 }
 
 function sfxHyperspace() {
