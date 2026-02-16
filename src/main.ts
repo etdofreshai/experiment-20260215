@@ -197,13 +197,15 @@ let fireActive = false
 let fireTouchId: number | null = null
 let fireAutoTimer: ReturnType<typeof setInterval> | null = null
 let firePos_: Vec2 | null = null  // where the fire button currently is (follows thumb)
-let fireOpacity = 0  // 0 = transparent, 1 = opaque; fades after release
+let fireOpacity = 0.1  // 0.1 = idle, 1 = active; fades to 10% after release
+let dpadOpacity = 0.1  // 0.1 = idle, 1 = active; fades to 10%
 let hyperspaceActive = false
 let hyperspaceTouchId: number | null = null
 
 const DPAD_R = 55
 const DPAD_DEAD = 14
 const BTN_R = 38
+const HYPER_R = Math.round(BTN_R * 0.6)
 
 // Floating joystick state
 let joystickCenter: Vec2 | null = null  // null when not touching
@@ -214,13 +216,14 @@ function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } 
 function firePos() { return firePos_ || { x: canvas.width - 85, y: canvas.height - 280 } }
 function hyperspacePos() {
   const fp = firePos()
-  const offset = BTN_R * 2 + 12
-  const rightEdge = canvas.width - BTN_R - 10
+  const gap = 6  // small gap — almost attached
+  const offset = BTN_R + HYPER_R + gap
+  const rightEdge = canvas.width - HYPER_R - 10
   // Above-right of fire, unless too close to right edge then above-left
   if (fp.x + offset > rightEdge) {
-    return { x: fp.x - offset, y: fp.y - offset }
+    return { x: fp.x - offset, y: fp.y - offset * 0.6 }
   }
-  return { x: fp.x + offset, y: fp.y - offset }
+  return { x: fp.x + offset, y: fp.y - offset * 0.6 }
 }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
@@ -284,7 +287,7 @@ canvas.addEventListener('touchstart', e => {
       joystickThumb = { x: t.clientX, y: t.clientY }
       // No direction yet — finger just landed on center
       dpad.left = false; dpad.right = false; dpad.up = false
-    } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, BTN_R)) {
+    } else if (hitTest(t.clientX, t.clientY, hp.x, hp.y, HYPER_R)) {
       hyperspaceTouchId = t.identifier; hyperspaceActive = true; activateHyperspace()
     } else if (fireTouchId === null && t.clientX > canvas.width * JOYSTICK_ZONE_X) {
       fireTouchId = t.identifier; fireActive = true; fireOpacity = 1
@@ -596,10 +599,17 @@ function update() {
   if (asteroids.length === 0) { level++; spawnAsteroids(4 + level) }
 
   // Fire button opacity fade
+  // D-pad opacity fade
+  if (dpadTouchId !== null) { dpadOpacity = 1 }
+  else if (dpadOpacity > 0.1) {
+    dpadOpacity -= 0.02
+    if (dpadOpacity <= 0.1) { dpadOpacity = 0.1 }
+  }
+
   if (fireActive) { fireOpacity = 1 }
-  else if (fireOpacity > 0) {
-    fireOpacity -= 0.02  // fade over ~50 frames (~0.8s)
-    if (fireOpacity <= 0) { fireOpacity = 0; firePos_ = null }
+  else if (fireOpacity > 0.1) {
+    fireOpacity -= 0.02  // fade over ~45 frames (~0.75s)
+    if (fireOpacity <= 0.1) { fireOpacity = 0.1 }
   }
 
   updateParticles()
@@ -739,25 +749,28 @@ function drawHUD() {
 function drawTouchControls() {
   if (!isTouchDevice || state !== 'playing') return
 
-  if (joystickCenter) {
-    const dp = joystickCenter
+  {
+    const dp = joystickCenter || dpadPos()
+    const alpha = dpadOpacity
 
     // Outer ring
     ctx.beginPath()
     ctx.arc(dp.x, dp.y, DPAD_R, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2; ctx.stroke()
-    ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fill()
+    ctx.strokeStyle = `rgba(255,255,255,${0.2 * alpha})`; ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = `rgba(255,255,255,${0.04 * alpha})`; ctx.fill()
 
-    // Thumb nub — clamped to radius
-    const tdx = joystickThumb.x - dp.x, tdy = joystickThumb.y - dp.y
-    const td = Math.hypot(tdx, tdy)
-    const clamp = Math.min(td, DPAD_R)
-    const nx = td > 0 ? tdx / td * clamp : 0
-    const ny = td > 0 ? tdy / td * clamp : 0
-    ctx.beginPath()
-    ctx.arc(dp.x + nx, dp.y + ny, 18, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.5; ctx.stroke()
+    if (joystickCenter) {
+      // Thumb nub — clamped to radius
+      const tdx = joystickThumb.x - dp.x, tdy = joystickThumb.y - dp.y
+      const td = Math.hypot(tdx, tdy)
+      const clamp = Math.min(td, DPAD_R)
+      const nx = td > 0 ? tdx / td * clamp : 0
+      const ny = td > 0 ? tdy / td * clamp : 0
+      ctx.beginPath()
+      ctx.arc(dp.x + nx, dp.y + ny, 18, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255,255,255,${0.2 * alpha})`; ctx.fill()
+      ctx.strokeStyle = `rgba(255,255,255,${0.4 * alpha})`; ctx.lineWidth = 1.5; ctx.stroke()
+    }
 
     // Direction arrows
     const drawArrow = (angle: number, active: boolean) => {
@@ -769,7 +782,7 @@ function drawTouchControls() {
       ctx.lineTo(DPAD_R - 28, -10)
       ctx.lineTo(DPAD_R - 28, 10)
       ctx.closePath()
-      ctx.fillStyle = active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
+      ctx.fillStyle = active ? `rgba(255,255,255,${0.7 * alpha})` : `rgba(255,255,255,${0.25 * alpha})`
       ctx.fill()
       ctx.restore()
     }
@@ -782,8 +795,8 @@ function drawTouchControls() {
   }
 
   const fp = firePos()
-  const fo = fireOpacity  // 0..1
-  if (fo > 0 || fireActive) {
+  const fo = fireOpacity  // 0.1..1
+  {
     const alpha = fireActive ? 1 : fo
     ctx.beginPath()
     ctx.arc(fp.x, fp.y, BTN_R, 0, Math.PI * 2)
@@ -796,17 +809,20 @@ function drawTouchControls() {
     ctx.fillText('FIRE', fp.x, fp.y + 5)
   }
 
-  // Hyperspace button
+  // Hyperspace button — fades with fire button
   const hp = hyperspacePos()
-  ctx.beginPath()
-  ctx.arc(hp.x, hp.y, BTN_R, 0, Math.PI * 2)
-  ctx.fillStyle = hyperspaceActive ? 'rgba(100,150,255,0.35)' : 'rgba(100,150,255,0.1)'
-  ctx.fill()
-  ctx.strokeStyle = hyperspaceActive ? 'rgba(100,150,255,0.9)' : 'rgba(100,150,255,0.4)'
-  ctx.lineWidth = 2.5; ctx.stroke()
-  ctx.fillStyle = hyperspaceActive ? 'rgba(150,200,255,0.95)' : 'rgba(100,150,255,0.5)'
-  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'
-  ctx.fillText('HYPER', hp.x, hp.y + 4)
+  {
+    const alpha = hyperspaceActive ? 1 : fo
+    ctx.beginPath()
+    ctx.arc(hp.x, hp.y, HYPER_R, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.35 : 0.1) * alpha})`
+    ctx.fill()
+    ctx.strokeStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.9 : 0.4) * alpha})`
+    ctx.lineWidth = 2; ctx.stroke()
+    ctx.fillStyle = `rgba(150,200,255,${(hyperspaceActive ? 0.95 : 0.5) * alpha})`
+    ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'
+    ctx.fillText('HYPER', hp.x, hp.y + 3)
+  }
 }
 
 function drawMenu() {
