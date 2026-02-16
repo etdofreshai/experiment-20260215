@@ -76,6 +76,10 @@ const stars = Array.from({ length: 200 }, () => ({
   x: Math.random(), y: Math.random(), brightness: 0.3 + Math.random() * 0.7, size: 0.5 + Math.random() * 1.5
 }))
 
+// ─── Control Mode ───
+type ControlMode = 'direction' | 'spin'
+let controlMode: ControlMode = (localStorage.getItem('asteroids-ctrl') as ControlMode) || 'spin'
+
 // ─── State ───
 type GameState = 'menu' | 'playing' | 'gameover'
 let state: GameState = 'menu'
@@ -96,6 +100,7 @@ let frameCount = 0
 const keys: Record<string, boolean> = {}
 addEventListener('keydown', e => {
   keys[e.code] = true
+  if (state === 'menu' && e.code === 'Tab') { e.preventDefault(); toggleControlMode() }
   if (state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) startGame()
   if (state === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { state = 'menu' }
 })
@@ -104,7 +109,8 @@ addEventListener('keyup', e => { keys[e.code] = false })
 // ─── Touch Controls ───
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
 
-const dpad = { left: false, right: false, up: false }
+const dpad = { left: false, right: false, up: false, down: false }
+let dpadAngle: number | null = null  // exact angle for direction mode
 let dpadTouchId: number | null = null
 let fireActive = false
 let fireTouchId: number | null = null
@@ -145,19 +151,33 @@ function updateDpad(tx: number, ty: number) {
   // Recalculate direction from (possibly moved) center
   const fdx = tx - joystickCenter.x, fdy = ty - joystickCenter.y
   const fd = Math.hypot(fdx, fdy)
-  dpad.left = false; dpad.right = false; dpad.up = false
+  dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false
+  dpadAngle = null
   if (fd > DPAD_DEAD) {
     const a = Math.atan2(fdy, fdx)
-    if (a < -0.3 && a > -2.8) dpad.up = true
-    if (a > 2.2 || a < -2.2) dpad.left = true
-    if (a > -0.9 && a < 0.9) dpad.right = true
+    dpadAngle = a
+    if (controlMode === 'direction') {
+      // All directions active — handled in update via dpadAngle
+      dpad.up = true  // signal that stick is active
+    } else {
+      if (a < -0.3 && a > -2.8) dpad.up = true
+      if (a > 2.2 || a < -2.2) dpad.left = true
+      if (a > -0.9 && a < 0.9) dpad.right = true
+    }
   }
 }
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault()
   if (audioCtx.state === 'suspended') audioCtx.resume()
-  if (state === 'menu') { startGame(); return }
+  if (state === 'menu') {
+    const t0 = e.changedTouches[0]
+    const b = ctrlToggleBounds
+    if (t0.clientX >= b.x && t0.clientX <= b.x + b.w && t0.clientY >= b.y && t0.clientY <= b.y + b.h) {
+      toggleControlMode(); return
+    }
+    startGame(); return
+  }
   if (state === 'gameover') { state = 'menu'; return }
 
   for (let i = 0; i < e.changedTouches.length; i++) {
@@ -188,17 +208,25 @@ canvas.addEventListener('touchend', e => {
   e.preventDefault()
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
-    if (t.identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false }
+    if (t.identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false; dpadAngle = null }
     if (t.identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
   }
 }, { passive: false })
 
 canvas.addEventListener('touchcancel', e => {
   for (let i = 0; i < e.changedTouches.length; i++) {
-    if (e.changedTouches[i].identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false }
+    if (e.changedTouches[i].identifier === dpadTouchId) { dpadTouchId = null; joystickCenter = null; dpad.left = false; dpad.right = false; dpad.up = false; dpad.down = false; dpadAngle = null }
     if (e.changedTouches[i].identifier === fireTouchId) { fireTouchId = null; fireActive = false; if (fireAutoTimer) { clearInterval(fireAutoTimer); fireAutoTimer = null } }
   }
 })
+
+function toggleControlMode() {
+  controlMode = controlMode === 'spin' ? 'direction' : 'spin'
+  localStorage.setItem('asteroids-ctrl', controlMode)
+}
+
+// Control mode toggle button bounds (set during drawMenu)
+let ctrlToggleBounds = { x: 0, y: 0, w: 0, h: 0 }
 
 // ─── Actions ───
 function shootBullet() {
@@ -318,9 +346,44 @@ function update() {
   }
 
   // Ship controls
-  if (keys['ArrowLeft'] || keys['KeyA'] || dpad.left) ship.angle -= 0.05
-  if (keys['ArrowRight'] || keys['KeyD'] || dpad.right) ship.angle += 0.05
-  ship.thrust = !!(keys['ArrowUp'] || keys['KeyW'] || dpad.up)
+  if (controlMode === 'direction') {
+    // Direction mode: joystick angle steers ship toward that direction and thrusts
+    let dirActive = false
+    let targetAngle = ship.angle
+
+    // Keyboard: compose direction from WASD/arrows
+    let kx = 0, ky = 0
+    if (keys['ArrowLeft'] || keys['KeyA']) kx -= 1
+    if (keys['ArrowRight'] || keys['KeyD']) kx += 1
+    if (keys['ArrowUp'] || keys['KeyW']) ky -= 1
+    if (keys['ArrowDown'] || keys['KeyS']) ky += 1
+    if (kx !== 0 || ky !== 0) {
+      targetAngle = Math.atan2(ky, kx)
+      dirActive = true
+    }
+
+    // Touch joystick overrides
+    if (dpadAngle !== null) {
+      targetAngle = dpadAngle
+      dirActive = true
+    }
+
+    if (dirActive) {
+      // Smoothly rotate toward target
+      let diff = targetAngle - ship.angle
+      while (diff > Math.PI) diff -= Math.PI * 2
+      while (diff < -Math.PI) diff += Math.PI * 2
+      const turnSpeed = 0.1
+      if (Math.abs(diff) < turnSpeed) ship.angle = targetAngle
+      else ship.angle += Math.sign(diff) * turnSpeed
+    }
+    ship.thrust = dirActive
+  } else {
+    // Classic spin & throttle
+    if (keys['ArrowLeft'] || keys['KeyA'] || dpad.left) ship.angle -= 0.05
+    if (keys['ArrowRight'] || keys['KeyD'] || dpad.right) ship.angle += 0.05
+    ship.thrust = !!(keys['ArrowUp'] || keys['KeyW'] || dpad.up)
+  }
 
   if (ship.thrust) {
     thrustTick++
@@ -574,6 +637,9 @@ function drawTouchControls() {
     drawArrow(-Math.PI / 2, dpad.up)
     drawArrow(Math.PI, dpad.left)
     drawArrow(0, dpad.right)
+    if (controlMode === 'direction') {
+      drawArrow(Math.PI / 2, dpad.down)
+    }
   }
 
   const fp = firePos()
@@ -614,6 +680,22 @@ function drawMenu() {
     ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = `${isPortrait ? 14 : 16}px monospace`
     ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width / 2, canvas.height * 0.68)
   }
+
+  // Control mode toggle
+  const ctrlFont = isPortrait ? 14 : 16
+  ctx.font = `${ctrlFont}px monospace`
+  const modeLabel = controlMode === 'direction' ? '► DIRECTION MODE' : '► SPIN & THROTTLE'
+  const toggleText = isTouchDevice ? `[ ${modeLabel} ]  TAP TO CHANGE` : `[ ${modeLabel} ]  TAB TO CHANGE`
+  const toggleY = canvas.height * 0.76
+  const tw = ctx.measureText(toggleText).width
+  ctrlToggleBounds = { x: canvas.width / 2 - tw / 2 - 10, y: toggleY - ctrlFont - 2, w: tw + 20, h: ctrlFont + 12 }
+
+  // Highlight box
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1
+  ctx.strokeRect(ctrlToggleBounds.x, ctrlToggleBounds.y, ctrlToggleBounds.w, ctrlToggleBounds.h)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'
+  ctx.fillText(toggleText, canvas.width / 2, toggleY)
 }
 
 function drawGameOver() {
