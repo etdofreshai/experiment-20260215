@@ -216,14 +216,12 @@ function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } 
 function firePos() { return firePos_ || { x: canvas.width - 85, y: canvas.height - 280 } }
 function hyperspacePos() {
   const fp = firePos()
-  const gap = 6  // small gap — almost attached
-  const offset = BTN_R + HYPER_R + gap
-  const rightEdge = canvas.width - HYPER_R - 10
-  // Above-right of fire, unless too close to right edge then above-left
-  if (fp.x + offset > rightEdge) {
-    return { x: fp.x - offset, y: fp.y - offset * 0.6 }
+  const gap = BTN_R + HYPER_R + 20  // directly above fire with generous spacing
+  // If fire is too close to the top, place hyperspace below instead
+  if (fp.y - gap - HYPER_R < 60) {
+    return { x: fp.x, y: fp.y + gap }
   }
-  return { x: fp.x + offset, y: fp.y - offset * 0.6 }
+  return { x: fp.x, y: fp.y - gap }
 }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
@@ -815,11 +813,11 @@ function drawTouchControls() {
     const alpha = hyperspaceActive ? 1 : fo
     ctx.beginPath()
     ctx.arc(hp.x, hp.y, HYPER_R, 0, Math.PI * 2)
-    ctx.fillStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.35 : 0.1) * alpha})`
+    ctx.fillStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.35 : 0.18) * alpha})`
     ctx.fill()
-    ctx.strokeStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.9 : 0.4) * alpha})`
+    ctx.strokeStyle = `rgba(100,150,255,${(hyperspaceActive ? 0.9 : 0.55) * alpha})`
     ctx.lineWidth = 2; ctx.stroke()
-    ctx.fillStyle = `rgba(150,200,255,${(hyperspaceActive ? 0.95 : 0.5) * alpha})`
+    ctx.fillStyle = `rgba(150,200,255,${(hyperspaceActive ? 0.95 : 0.65) * alpha})`
     ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'
     ctx.fillText('HYPER', hp.x, hp.y + 3)
   }
