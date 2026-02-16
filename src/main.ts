@@ -145,7 +145,16 @@ const JOYSTICK_ZONE_X = 0.5  // left half of screen is joystick zone
 
 function dpadPos() { return joystickCenter || { x: 90, y: canvas.height - 280 } }
 function firePos() { return firePos_ || { x: canvas.width - 85, y: canvas.height - 280 } }
-function hyperspacePos() { return { x: canvas.width - 85, y: canvas.height - 170 } }
+function hyperspacePos() {
+  const fp = firePos()
+  const offset = BTN_R * 2 + 12
+  const rightEdge = canvas.width - BTN_R - 10
+  // Above-right of fire, unless too close to right edge then above-left
+  if (fp.x + offset > rightEdge) {
+    return { x: fp.x - offset, y: fp.y - offset }
+  }
+  return { x: fp.x + offset, y: fp.y - offset }
+}
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
   return Math.hypot(tx - cx, ty - cy) < r + 20
