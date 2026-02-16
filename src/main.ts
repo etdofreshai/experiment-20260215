@@ -184,7 +184,8 @@ addEventListener('keydown', e => {
   keys[e.code] = true
   if (state === 'menu' && e.code === 'Tab') { e.preventDefault(); toggleControlMode() }
   if (state === 'menu' && (e.code === 'Enter' || e.code === 'Space')) startGame()
-  if (state === 'gameover' && (e.code === 'Enter' || e.code === 'Space')) { state = 'menu' }
+  if (state === 'gameover' && e.code === 'Enter') { startGame() }
+  if (state === 'gameover' && e.code === 'Escape') { state = 'menu' }
   if (state === 'playing' && (e.code === 'Escape' || e.code === 'KeyP')) { paused = !paused }
 })
 addEventListener('keyup', e => { keys[e.code] = false })
@@ -276,7 +277,11 @@ canvas.addEventListener('touchstart', e => {
     }
     startGame(); return
   }
-  if (state === 'gameover') { state = 'menu'; return }
+  if (state === 'gameover') {
+    const t0 = e.changedTouches[0]
+    handleGameOverClick(t0.clientX, t0.clientY)
+    return
+  }
 
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i]
@@ -946,21 +951,89 @@ function drawMenu() {
   ctx.fillText(toggleText, canvas.width / 2, toggleY)
 }
 
+// ─── Game Over Menu ───
+let gameOverBtnPlay = { x: 0, y: 0, w: 0, h: 0 }
+let gameOverBtnMenu = { x: 0, y: 0, w: 0, h: 0 }
+
+function handleGameOverClick(cx: number, cy: number) {
+  if (cx >= gameOverBtnPlay.x && cx <= gameOverBtnPlay.x + gameOverBtnPlay.w &&
+      cy >= gameOverBtnPlay.y && cy <= gameOverBtnPlay.y + gameOverBtnPlay.h) {
+    startGame()
+  } else if (cx >= gameOverBtnMenu.x && cx <= gameOverBtnMenu.x + gameOverBtnMenu.w &&
+             cy >= gameOverBtnMenu.y && cy <= gameOverBtnMenu.y + gameOverBtnMenu.h) {
+    state = 'menu'
+  }
+}
+
+// Mouse click handler for game over buttons
+canvas.addEventListener('click', e => {
+  if (state === 'gameover') {
+    handleGameOverClick(e.clientX, e.clientY)
+  }
+})
+
 function drawGameOver() {
+  const halfH = canvas.height / 2
+
+  // Darken top half
+  ctx.fillStyle = 'rgba(0,0,0,0.75)'
+  ctx.fillRect(0, 0, canvas.width, halfH)
+
+  // Divider line
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, halfH); ctx.lineTo(canvas.width, halfH); ctx.stroke()
+
   ctx.textAlign = 'center'
+  const cx = canvas.width / 2
+
+  // Title
   const titleSize = isPortrait ? 36 : 48
+  const titleY = halfH * 0.28
   ctx.fillStyle = '#ff4444'; ctx.font = `bold ${titleSize}px monospace`
-  ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 40)
+  ctx.fillText('GAME OVER', cx, titleY)
+
+  // Score
+  const scoreY = titleY + (isPortrait ? 40 : 50)
   ctx.fillStyle = '#ffffff'; ctx.font = `${isPortrait ? 20 : 24}px monospace`
-  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 10)
+  ctx.fillText(`SCORE: ${score}`, cx, scoreY)
+
+  // High score
+  let nextY = scoreY + (isPortrait ? 30 : 35)
   if (score >= highScore && score > 0) {
     ctx.fillStyle = '#ffdd00'; ctx.font = `${isPortrait ? 16 : 20}px monospace`
-    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 + 45)
+    ctx.fillText('NEW HIGH SCORE!', cx, nextY)
+    nextY += (isPortrait ? 30 : 35)
   }
-  if (Math.floor(Date.now() / 500) % 2 === 0) {
-    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = `${isPortrait ? 14 : 18}px monospace`
-    const text = isTouchDevice ? 'TAP TO CONTINUE' : 'PRESS ENTER TO CONTINUE'
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 90)
+
+  // Buttons
+  const btnW = isPortrait ? 200 : 240
+  const btnH = isPortrait ? 44 : 50
+  const btnGap = 14
+  const btnStartY = nextY + 10
+
+  // Play Again button
+  gameOverBtnPlay = { x: cx - btnW / 2, y: btnStartY, w: btnW, h: btnH }
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'
+  ctx.fillRect(gameOverBtnPlay.x, gameOverBtnPlay.y, btnW, btnH)
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2
+  ctx.strokeRect(gameOverBtnPlay.x, gameOverBtnPlay.y, btnW, btnH)
+  ctx.fillStyle = '#ffffff'; ctx.font = `bold ${isPortrait ? 16 : 18}px monospace`
+  ctx.fillText('PLAY AGAIN', cx, btnStartY + btnH / 2 + 6)
+
+  // Main Menu button
+  const menuBtnY = btnStartY + btnH + btnGap
+  gameOverBtnMenu = { x: cx - btnW / 2, y: menuBtnY, w: btnW, h: btnH }
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'
+  ctx.fillRect(gameOverBtnMenu.x, gameOverBtnMenu.y, btnW, btnH)
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5
+  ctx.strokeRect(gameOverBtnMenu.x, gameOverBtnMenu.y, btnW, btnH)
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = `${isPortrait ? 14 : 16}px monospace`
+  ctx.fillText('MAIN MENU', cx, menuBtnY + btnH / 2 + 5)
+
+  // Keyboard hint
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = `${isPortrait ? 10 : 12}px monospace`
+  if (!isTouchDevice) {
+    ctx.fillText('ENTER — PLAY AGAIN    ESC — MAIN MENU', cx, menuBtnY + btnH + 25)
   }
 }
 
