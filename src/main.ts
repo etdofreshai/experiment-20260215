@@ -142,9 +142,9 @@ const DPAD_DEAD = 14
 const BTN_R = 38
 const SPRAY_R = 30
 
-function dpadPos() { return { x: 90, y: canvas.height - 120 } }
-function firePos() { return { x: canvas.width - 85, y: canvas.height - 140 } }
-function sprayPos() { return { x: canvas.width - 170, y: canvas.height - 75 } }
+function dpadPos() { return { x: 90, y: canvas.height - 180 } }
+function firePos() { return { x: canvas.width - 85, y: canvas.height - 200 } }
+function sprayPos() { return { x: canvas.width - 170, y: canvas.height - 135 } }
 
 function hitTest(tx: number, ty: number, cx: number, cy: number, r: number) {
   return Math.hypot(tx - cx, ty - cy) < r + 20
